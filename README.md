@@ -27,10 +27,7 @@ The **AI-Powered Resume Screening and Ranking System** leverages **Artificial In
 
 ## 🎯 Project Structure
 ```
-📂 AI-Resume-Screening-System  
-│── 📂 Documentation  
-│     ├── Project_Report.docx  
-│     ├── Presentation.pptx  
+📂 AI-Resume-Screening-System    
 │  
 │── 📂 Source_Code  
 │     ├── resume_ranking_advanced.py  
