@@ -8,10 +8,34 @@ from PIL import Image
 import spacy
 from sentence_transformers import SentenceTransformer, util
 import torch
+import re
+import logging
+
+logging.basicConfig(level=logging.INFO)
+st.set_page_config(page_title="AI Resume Screening", page_icon="📄")
 
 # Load NLP model for Named Entity Recognition
-nlp = spacy.load("en_core_web_sm")
+from spacy.cli import download
 
+@st.cache_resource
+def load_spacy_model():
+    try:
+        nlp_model = spacy.load("en_core_web_sm")
+        st.success("✅ spaCy model loaded successfully")
+        return nlp_model
+    except OSError:
+        st.warning("⚠️ spaCy full model unavailable, using fallback blank model with rule-based NER")
+        nlp_model = spacy.blank("en")
+        
+        # Add rule-based entity ruler for basic NER fallback
+        ruler = nlp_model.add_pipe("entity_ruler")
+        patterns = [
+            {"label": "EMAIL", "pattern": [{"LIKE_EMAIL": True}]},
+            {"label": "PHONE", "pattern": [{"SHAPE": {"regex": r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"}}]},
+            {"label": "PERSON", "pattern": [{"POS": "PROPN", "OP": "*"}]}
+        ]
+        ruler.add_patterns(patterns)
+        return nlp_model
 # Load pre-trained BERT model for embeddings
 bert_model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -25,9 +49,8 @@ def extract_text_from_pdf(pdf_file):
 
 # Function to extract text from image (OCR)
 def extract_text_from_image(image_file):
-    image = Image.open(image_file)
-    text = pytesseract.image_to_string(image)
-    return text.strip()
+    return "Image processing not supported on Streamlit Cloud"
+
 
 # Function to get BERT embeddings
 def get_embeddings(text):
@@ -41,7 +64,13 @@ def calculate_similarity(resume_embedding, job_embedding):
 
 # Function to extract key details from resumes using Named Entity Recognition (NER)
 def extract_resume_details(text):
-    doc = nlp(text)
+    try:
+        nlp_model = load_spacy_model()
+        doc = nlp_model(text)
+    except Exception as e:
+        st.error(f"NER extraction failed: {e}. Using regex fallback.")
+        return regex_extract_details(text)
+    
     details = {
         "Name": None,
         "Email": None,
@@ -52,11 +81,11 @@ def extract_resume_details(text):
     }
     
     for ent in doc.ents:
-        if ent.label_ == "PERSON" and not details["Name"]:
+        if ent.label_ == "PERSON" and details["Name"] is None:
             details["Name"] = ent.text
-        elif ent.label_ == "EMAIL" and not details["Email"]:
+        elif ent.label_ == "EMAIL" and details["Email"] is None:
             details["Email"] = ent.text
-        elif ent.label_ == "PHONE" and not details["Phone"]:
+        elif ent.label_ == "PHONE" and details["Phone"] is None:
             details["Phone"] = ent.text
         elif ent.label_ in ["ORG", "WORK_OF_ART"]:
             details["Education"] = ent.text
@@ -65,21 +94,44 @@ def extract_resume_details(text):
             
     return details
 
+def regex_extract_details(text):
+    """Fallback regex-based entity extraction"""
+    details = {"Name": None, "Email": None, "Phone": None, "Skills": [], "Experience": None, "Education": None}
+    
+    # Email
+    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+    details["Email"] = email_match.group() if email_match else None
+    
+    # Phone
+    phone_match = re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', text)
+    details["Phone"] = phone_match.group() if phone_match else None
+    
+    # Simple name assumption (first proper noun-like)
+    name_match = re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', text)
+    details["Name"] = name_match.group() if name_match else None
+    
+    return details
+
 
 
 # Function to rank resumes based on job description
+@st.cache_data
 def rank_resumes(resumes, job_description):
     job_embedding = get_embeddings(job_description)
     ranked_resumes = []
 
     for resume in resumes:
-        text = extract_text_from_pdf(resume) if resume.name.endswith(".pdf") else extract_text_from_image(resume)
-        resume_embedding = get_embeddings(text)
-        score = calculate_similarity(resume_embedding, job_embedding)
-        details = extract_resume_details(text)
-        ranked_resumes.append((details, score))
+        try:
+            text = extract_text_from_pdf(resume) if resume.name.endswith(".pdf") else extract_text_from_image(resume)
+            resume_embedding = get_embeddings(text)
+            score = calculate_similarity(resume_embedding, job_embedding)
+            details = extract_resume_details(text)
+            ranked_resumes.append((details, score))
+        except Exception as e:
+            st.error(f"Failed to process resume {resume.name}: {e}")
+            continue
     
-    ranked_resumes.sort(key=lambda x: x[1], reverse=True)  # Sort by similarity score
+    ranked_resumes.sort(key=lambda x: x[1], reverse=True)
     return ranked_resumes
 
 
@@ -93,7 +145,7 @@ def check_diversity(ranked_resumes):
 
 
 
-st.title(" AI Resume Screening & Ranking System")
+st.title("📄 AI Resume Screening & Ranking System")
 
 # Upload resumes
 uploaded_resumes = st.file_uploader("Upload Resumes (PDF or Image)", accept_multiple_files=True)
