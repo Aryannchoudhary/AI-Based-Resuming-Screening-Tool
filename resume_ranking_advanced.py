@@ -21,10 +21,10 @@ from spacy.cli import download
 def load_spacy_model():
     try:
         nlp_model = spacy.load("en_core_web_sm")
-        st.success("✅ spaCy model loaded successfully")
+        st.success("✅ Full spaCy model loaded")
         return nlp_model
     except OSError:
-        st.warning("⚠️ spaCy full model unavailable, using fallback blank model with rule-based NER")
+        st.info("📋 Rule-based NER active (cloud-safe)")
         nlp_model = spacy.blank("en")
         
         # Add rule-based entity ruler for basic NER fallback
@@ -64,12 +64,8 @@ def calculate_similarity(resume_embedding, job_embedding):
 
 # Function to extract key details from resumes using Named Entity Recognition (NER)
 def extract_resume_details(text):
-    try:
-        nlp_model = load_spacy_model()
-        doc = nlp_model(text)
-    except Exception as e:
-        st.error(f"NER extraction failed: {e}. Using regex fallback.")
-        return regex_extract_details(text)
+    nlp_model = load_spacy_model()
+    doc = nlp_model(text)
     
     details = {
         "Name": None,
