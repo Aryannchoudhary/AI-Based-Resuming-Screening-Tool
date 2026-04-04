@@ -1,15 +1,11 @@
+
+
 streamlit
 pandas
-numpy
-torch
-transformers
-sentence-transformers
-pytesseract
-opencv-python-headless
+numpy==1.26.4
+torch==2.2.2
+sentence-transformers==2.6.1
 PyPDF2
-Flask
 scikit-learn
-matplotlib
-seaborn
 spacy==3.7.2
-# en_core_web_sm model handled via fallback in code for Streamlit Cloud compatibility
+thinc==8.2.2
