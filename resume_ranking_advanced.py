@@ -8,10 +8,7 @@ import re
 
 st.set_page_config(page_title="AI Resume Screening", page_icon="📄")
 
-# =========================
-# 🔹 LOAD MODELS (CACHED)
-# =========================
-
+# load model with caching to speed up subsequent runs
 @st.cache_resource
 def load_spacy_model():
     try:
@@ -40,9 +37,7 @@ def load_bert():
 nlp = load_spacy_model()
 bert_model = load_bert()
 
-# =========================
-# 🔹 SKILLS DATABASE
-# =========================
+# predefined skills database for keyword matching
 
 SKILLS_DB = [
     "python", "java", "c++", "sql", "machine learning", "deep learning",
@@ -55,9 +50,7 @@ def extract_skills(text):
     text = text.lower()
     return list(set([skill for skill in SKILLS_DB if skill in text]))
 
-# =========================
-# 🔹 FILE PROCESSING
-# =========================
+# function to extract text from PDF resumes
 
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -66,9 +59,7 @@ def extract_text_from_pdf(pdf_file):
         text += page.extract_text() + "\n"
     return text.strip()
 
-# =========================
-# 🔹 EMBEDDINGS
-# =========================
+# function to get BERT embeddings and calculate similarity
 
 def get_embeddings(text):
     return bert_model.encode(text[:3000], convert_to_tensor=True)
@@ -76,9 +67,7 @@ def get_embeddings(text):
 def calculate_similarity(resume_embedding, job_embedding):
     return util.pytorch_cos_sim(resume_embedding, job_embedding).item()
 
-# =========================
-# 🔹 ENTITY EXTRACTION
-# =========================
+# function to extract details using regex as fallback when NER fails
 
 def regex_extract_details(text):
     details = {"Name": None, "Email": None, "Phone": None}
@@ -117,9 +106,7 @@ def extract_resume_details(text):
 
     return details
 
-# =========================
-# 🔹 ATS SCORING
-# =========================
+# function to calculate final ATS score combining similarity and skill match
 
 def calculate_ats_score(resume_text, job_description, similarity):
     resume_skills = extract_skills(resume_text)
@@ -132,10 +119,7 @@ def calculate_ats_score(resume_text, job_description, similarity):
 
     return final_score, list(matched)
 
-# =========================
-# 🔹 RANKING
-# =========================
-
+# function to rank resumes based on combined score with caching for performance
 @st.cache_data
 def rank_resumes(resumes, job_description):
     job_embedding = get_embeddings(job_description)
@@ -162,10 +146,7 @@ def rank_resumes(resumes, job_description):
     ranked.sort(key=lambda x: x[1], reverse=True)
     return ranked
 
-# =========================
-# 🔹 BIAS CHECK
-# =========================
-
+# function to check diversity in ranked results (simple heuristic based on names)
 def check_diversity(ranked):
     names = [r[0]["Name"] for r in ranked if r[0]["Name"]]
 
@@ -173,10 +154,7 @@ def check_diversity(ranked):
         return "⚠️ Low diversity detected"
     return "✅ Fair ranking"
 
-# =========================
-# 🔹 UI
-# =========================
-
+# Streamlit UI
 st.title("📄 AI Resume Screening & Ranking System")
 
 uploaded_resumes = st.file_uploader("Upload Resumes (PDF)", accept_multiple_files=True)
