@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import PyPDF2
-import pytesseract
 from PIL import Image
 import spacy
 from sentence_transformers import SentenceTransformer, util
