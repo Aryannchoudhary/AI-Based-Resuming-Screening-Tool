@@ -1,20 +1,16 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import PyPDF2
-from PIL import Image
 import spacy
 from sentence_transformers import SentenceTransformer, util
-import torch
 import re
-import logging
 
-logging.basicConfig(level=logging.INFO)
 st.set_page_config(page_title="AI Resume Screening", page_icon="📄")
 
-# Load NLP model for Named Entity Recognition
-from spacy.cli import download
+# =========================
+# 🔹 LOAD MODELS (CACHED)
+# =========================
 
 @st.cache_resource
 def load_spacy_model():
@@ -22,23 +18,47 @@ def load_spacy_model():
         nlp_model = spacy.load("en_core_web_sm")
         st.success("✅ Full spaCy model loaded")
         return nlp_model
-    except OSError:
-        st.info("📋 Rule-based NER active (cloud-safe)")
+    except:
+        st.info("📋 Using lightweight NLP (cloud-safe)")
         nlp_model = spacy.blank("en")
-        
-        # Add rule-based entity ruler for basic NER fallback
+
         ruler = nlp_model.add_pipe("entity_ruler")
         patterns = [
             {"label": "EMAIL", "pattern": [{"LIKE_EMAIL": True}]},
-            {"label": "PHONE", "pattern": [{"SHAPE": {"regex": r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"}}]},
-            {"label": "PERSON", "pattern": [{"POS": "PROPN", "OP": "*"}]}
+            {"label": "PHONE", "pattern": [{"TEXT": {"REGEX": r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"}}]}
         ]
         ruler.add_patterns(patterns)
-        return nlp_model
-# Load pre-trained BERT model for embeddings
-bert_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Function to extract text from PDF
+        return nlp_model
+
+
+@st.cache_resource
+def load_bert():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+
+nlp = load_spacy_model()
+bert_model = load_bert()
+
+# =========================
+# 🔹 SKILLS DATABASE
+# =========================
+
+SKILLS_DB = [
+    "python", "java", "c++", "sql", "machine learning", "deep learning",
+    "nlp", "data science", "pandas", "numpy", "tensorflow", "pytorch",
+    "django", "flask", "html", "css", "javascript", "react", "node.js",
+    "excel", "power bi", "tableau", "git", "docker", "aws"
+]
+
+def extract_skills(text):
+    text = text.lower()
+    return list(set([skill for skill in SKILLS_DB if skill in text]))
+
+# =========================
+# 🔹 FILE PROCESSING
+# =========================
+
 def extract_text_from_pdf(pdf_file):
     pdf_reader = PyPDF2.PdfReader(pdf_file)
     text = ""
@@ -46,130 +66,146 @@ def extract_text_from_pdf(pdf_file):
         text += page.extract_text() + "\n"
     return text.strip()
 
-# Function to extract text from image (OCR)
-def extract_text_from_image(image_file):
-    return "Image processing not supported on Streamlit Cloud"
+# =========================
+# 🔹 EMBEDDINGS
+# =========================
 
-
-# Function to get BERT embeddings
 def get_embeddings(text):
-    return bert_model.encode(text, convert_to_tensor=True)
+    return bert_model.encode(text[:3000], convert_to_tensor=True)
 
-# Function to calculate similarity score
 def calculate_similarity(resume_embedding, job_embedding):
     return util.pytorch_cos_sim(resume_embedding, job_embedding).item()
 
+# =========================
+# 🔹 ENTITY EXTRACTION
+# =========================
+
+def regex_extract_details(text):
+    details = {"Name": None, "Email": None, "Phone": None}
+
+    email = re.search(r'\S+@\S+', text)
+    phone = re.search(r'\b\d{10}\b', text)
+    name = re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', text)
+
+    details["Email"] = email.group() if email else None
+    details["Phone"] = phone.group() if phone else None
+    details["Name"] = name.group() if name else None
+
+    return details
 
 
-# Function to extract key details from resumes using Named Entity Recognition (NER)
 def extract_resume_details(text):
-    nlp_model = load_spacy_model()
-    doc = nlp_model(text)
-    
+    doc = nlp(text)
+
     details = {
         "Name": None,
         "Email": None,
         "Phone": None,
-        "Skills": [],
-        "Experience": None,
-        "Education": None
+        "Skills": extract_skills(text)
     }
-    
+
     for ent in doc.ents:
-        if ent.label_ == "PERSON" and details["Name"] is None:
-            details["Name"] = ent.text
-        elif ent.label_ == "EMAIL" and details["Email"] is None:
+        if ent.label_ == "EMAIL":
             details["Email"] = ent.text
-        elif ent.label_ == "PHONE" and details["Phone"] is None:
+        elif ent.label_ == "PHONE":
             details["Phone"] = ent.text
-        elif ent.label_ in ["ORG", "WORK_OF_ART"]:
-            details["Education"] = ent.text
-        elif ent.label_ == "DATE":
-            details["Experience"] = ent.text
-            
+
+    # fallback for name
+    if not details["Name"]:
+        regex_data = regex_extract_details(text)
+        details["Name"] = regex_data["Name"]
+
     return details
 
-def regex_extract_details(text):
-    """Fallback regex-based entity extraction"""
-    details = {"Name": None, "Email": None, "Phone": None, "Skills": [], "Experience": None, "Education": None}
-    
-    # Email
-    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
-    details["Email"] = email_match.group() if email_match else None
-    
-    # Phone
-    phone_match = re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', text)
-    details["Phone"] = phone_match.group() if phone_match else None
-    
-    # Simple name assumption (first proper noun-like)
-    name_match = re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', text)
-    details["Name"] = name_match.group() if name_match else None
-    
-    return details
+# =========================
+# 🔹 ATS SCORING
+# =========================
 
+def calculate_ats_score(resume_text, job_description, similarity):
+    resume_skills = extract_skills(resume_text)
+    jd_skills = extract_skills(job_description)
 
+    matched = set(resume_skills).intersection(set(jd_skills))
+    skill_score = len(matched) / (len(jd_skills) + 1)
 
-# Function to rank resumes based on job description
+    final_score = (0.7 * similarity) + (0.3 * skill_score)
+
+    return final_score, list(matched)
+
+# =========================
+# 🔹 RANKING
+# =========================
+
 @st.cache_data
 def rank_resumes(resumes, job_description):
     job_embedding = get_embeddings(job_description)
-    ranked_resumes = []
+    ranked = []
 
     for resume in resumes:
         try:
-            text = extract_text_from_pdf(resume) if resume.name.endswith(".pdf") else extract_text_from_image(resume)
+            if not resume.name.endswith(".pdf"):
+                continue
+
+            text = extract_text_from_pdf(resume)
             resume_embedding = get_embeddings(text)
-            score = calculate_similarity(resume_embedding, job_embedding)
+
+            similarity = calculate_similarity(resume_embedding, job_embedding)
+            final_score, matched_skills = calculate_ats_score(text, job_description, similarity)
+
             details = extract_resume_details(text)
-            ranked_resumes.append((details, score))
+
+            ranked.append((details, final_score, matched_skills, text))
+
         except Exception as e:
-            st.error(f"Failed to process resume {resume.name}: {e}")
-            continue
-    
-    ranked_resumes.sort(key=lambda x: x[1], reverse=True)
-    return ranked_resumes
+            st.error(f"Error in {resume.name}: {e}")
 
+    ranked.sort(key=lambda x: x[1], reverse=True)
+    return ranked
 
+# =========================
+# 🔹 BIAS CHECK
+# =========================
 
-# Function to check diversity and bias in ranking
-def check_diversity(ranked_resumes):
-    diversity_score = np.random.uniform(0.5, 1.0)  # Placeholder score (future expansion with real bias detection)
-    if diversity_score < 0.7:
-        return "⚠️ Potential bias detected in ranking! Consider reviewing candidate selection."
-    return "✅ Ranking appears fair and unbiased."
+def check_diversity(ranked):
+    names = [r[0]["Name"] for r in ranked if r[0]["Name"]]
 
+    if len(set(names)) < len(names) * 0.5:
+        return "⚠️ Low diversity detected"
+    return "✅ Fair ranking"
 
+# =========================
+# 🔹 UI
+# =========================
 
 st.title("📄 AI Resume Screening & Ranking System")
 
-# Upload resumes
-uploaded_resumes = st.file_uploader("Upload Resumes (PDF or Image)", accept_multiple_files=True)
+uploaded_resumes = st.file_uploader("Upload Resumes (PDF)", accept_multiple_files=True)
+job_description = st.text_area("Enter Job Description")
 
-# Upload job description
-job_description = st.text_area("Enter Job Description (or Upload as File)")
-
-# Button to start ranking
-if st.button("Analyze & Rank Resumes"):
+if st.button("Analyze & Rank"):
     if uploaded_resumes and job_description:
-        with st.spinner("Processing resumes..."):
-            ranked_resumes = rank_resumes(uploaded_resumes, job_description)
-            bias_message = check_diversity(ranked_resumes)
-            
-            # Display results
-            st.subheader("📊 Ranked Resumes")
-            for i, (details, score) in enumerate(ranked_resumes):
-                st.write(f"**Rank {i+1}: {details.get('Name', 'Unknown')}**")
-                st.write(f"🔹 **Score:** {round(score * 100, 2)}% match")
-                st.write(f"📧 **Email:** {details.get('Email', 'N/A')}")
-                st.write(f"📞 **Phone:** {details.get('Phone', 'N/A')}")
-                st.write(f"🎓 **Education:** {details.get('Education', 'N/A')}")
-                st.write(f"💼 **Experience:** {details.get('Experience', 'N/A')}")
-                st.write("—" * 30)
-            
-            # Show bias check
-            st.subheader("⚖️ Diversity & Bias Check")
-            st.write(bias_message)
+        with st.spinner("Processing..."):
+            results = rank_resumes(uploaded_resumes, job_description)
+
+            st.subheader("📊 Ranked Candidates")
+
+            for i, (details, score, skills, text) in enumerate(results):
+                st.markdown(f"## 🏆 Rank {i+1}: {details.get('Name', 'Unknown')}")
+
+                st.progress(score)
+                st.write(f"🎯 ATS Score: {round(score*100,2)}%")
+
+                st.write(f"🧠 Skills Matched: {', '.join(skills) if skills else 'None'}")
+                st.write(f"📧 Email: {details.get('Email','N/A')}")
+                st.write(f"📞 Phone: {details.get('Phone','N/A')}")
+
+                with st.expander("📄 View Resume"):
+                    st.write(text[:1000])
+
+                st.markdown("---")
+
+            st.subheader("⚖️ Bias Check")
+            st.write(check_diversity(results))
+
     else:
-        st.error("Please upload resumes and enter a job description!")
-
-
+        st.error("Upload resumes and enter job description")
