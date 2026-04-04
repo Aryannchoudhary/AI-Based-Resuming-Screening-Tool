@@ -13,4 +13,3 @@ matplotlib
 seaborn
 spacy==3.7.2
 # en_core_web_sm model handled via fallback in code for Streamlit Cloud compatibility
-spacy[apple] # Optional: for macOS Apple Silicon
